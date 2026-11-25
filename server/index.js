@@ -225,6 +225,6 @@ app.use((err, req, res, next) => {
 await connectDatabase()
 app.listen(PORT, () => {
   console.log(`AgroVoice server running on http://localhost:${PORT}`)
-  console.log(`AI: speech-to-text=${process.env.AI_STT || 'elevenlabs'}, advisor=${process.env.AI_ADVISOR || 'claude'}, voice=${process.env.AI_TTS || '9jalingo'}`)
+  console.log(`AI: speech-to-text=${process.env.AI_STT || 'elevenlabs'}, advisor=${process.env.AI_ADVISOR || 'nvidia'}, voice=${process.env.AI_TTS || '9jalingo'}`)
   resumePending()
 })

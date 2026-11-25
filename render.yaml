@@ -24,12 +24,12 @@ services:
       - key: AI_STT
         value: elevenlabs
       - key: AI_ADVISOR
-        value: claude
+        value: nvidia
       - key: AI_TTS
         value: 9jalingo
       - key: ELEVENLABS_API_KEY
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: NVIDIA_API_KEY
         sync: false
       - key: NAIJALINGO_API_KEY
         sync: false

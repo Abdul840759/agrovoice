@@ -127,8 +127,8 @@ which work with the local Vite proxy but are not connected to a production API.
 Create a MongoDB Atlas cluster and database user, then copy its connection URI. Create a Render **Web Service**
 from this repository with **Root Directory** `server`, **Build Command** `npm install`, and **Start Command**
 `npm start`. Set `MONGODB_URI` to the Atlas URI, `JWT_SECRET` to a long random value, and `CORS_ORIGIN`
-to the Vercel app origin. Add `AI_STT=elevenlabs`, `AI_ADVISOR=claude`, `AI_TTS=9jalingo`,
-`ELEVENLABS_API_KEY`, `ANTHROPIC_API_KEY`, and `NAIJALINGO_API_KEY`. The included `render.yaml` provisions a
+to the Vercel app origin. Add `AI_STT=elevenlabs`, `AI_ADVISOR=nvidia`, `AI_TTS=9jalingo`,
+`ELEVENLABS_API_KEY`, `NVIDIA_API_KEY`, and `NAIJALINGO_API_KEY`. The included `render.yaml` provisions a
 persistent disk for uploads; no database disk is needed.
 
 The app uses MongoDB for persistent records and Render persistent disk for uploaded files. For horizontal scaling, move uploads to object storage such as S3 or Cloudinary. Do not commit `server/.env`, database files, or uploads.
@@ -211,7 +211,7 @@ Each step has a provider you choose in `server/.env`. After editing `.env`, stop
 | Step | Setting | Options |
 |---|---|---|
 | Speech to text | `AI_STT` | `elevenlabs` (Scribe model) |
-| Advisor | `AI_ADVISOR` | `claude` |
+| Advisor | `AI_ADVISOR` | `NVIDIA` |
 | Voice answer | `AI_TTS` | `9jalingo` (Hausa voices) |
 
 **1. Configure and verify the real providers.** Add their API keys to `server/.env`, then test each service:
@@ -225,7 +225,7 @@ npm run test-ai -- tts     ha "Sannu manomi, ina kwana?"
 ```
 
 Keys needed (these services bill by use, check each one's current pricing and free credits):
-- `ANTHROPIC_API_KEY` from https://console.anthropic.com (API credits are separate from a Claude chat subscription)
+- `NVIDIA_API_KEY` from https://build.nvidia.com (generate an NVIDIA API key; prototype endpoint availability and limits depend on NVIDIA)
 - `ELEVENLABS_API_KEY` from https://elevenlabs.io
 - `NAIJALINGO_API_KEY` from https://9jalingo.org/dashboard
 

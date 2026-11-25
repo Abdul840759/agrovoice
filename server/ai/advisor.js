@@ -1,5 +1,5 @@
 // The farm advisor: question (+ optional crop photo) in, advice text out.
-// Advice uses Anthropic Claude. Mock responses are intentionally unsupported.
+// Farm advice uses NVIDIA's OpenAI-compatible inference endpoint. Mock responses are unsupported.
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -33,15 +33,15 @@ How to answer:
 }
 
 export async function advise({ language, text, photoPath }) {
-  const provider = (process.env.AI_ADVISOR || 'claude').toLowerCase()
-  if (provider === 'claude') return claude({ language, text, photoPath })
-  throw new Error(`Unknown AI_ADVISOR "${provider}". Use "claude".`)
+  const provider = (process.env.AI_ADVISOR || 'nvidia').toLowerCase()
+  if (provider === 'nvidia') return nvidia({ language, text, photoPath })
+  throw new Error(`Unknown AI_ADVISOR "${provider}". Use "nvidia".`)
 }
 
-async function claude({ language, text, photoPath }) {
-  const key = process.env.ANTHROPIC_API_KEY
-  if (!key) throw new Error('ANTHROPIC_API_KEY is missing in server/.env')
-  const base = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'
+async function nvidia({ language, text, photoPath }) {
+  const key = process.env.NVIDIA_API_KEY
+  if (!key) throw new Error('NVIDIA_API_KEY is missing in the server environment.')
+  const base = process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1'
 
   const content = []
   let photoNote = ''
@@ -49,7 +49,7 @@ async function claude({ language, text, photoPath }) {
     const type = IMAGE_TYPES[path.extname(photoPath).toLowerCase()]
     const bytes = fs.readFileSync(photoPath)
     if (type && bytes.length <= MAX_IMAGE_BYTES) {
-      content.push({ type: 'image', source: { type: 'base64', media_type: type, data: bytes.toString('base64') } })
+      content.push({ type: 'image_url', image_url: { url: `data:${type};base64,${bytes.toString('base64')}` } })
     } else {
       photoNote = '\n(The farmer also sent a photo, but it could not be read. Mention this briefly and ask them to send a smaller or clearer photo.)'
     }
@@ -62,20 +62,19 @@ async function claude({ language, text, photoPath }) {
 
   const res = await fetch(`${base}/v1/messages`, {
     method: 'POST',
-    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    headers: { Authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({
-      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',
+      model: process.env.NVIDIA_MODEL || 'nvidia/nemotron-3.5-super-vl-120b-a12b',
       max_tokens: 700,
-      system: systemPrompt(language),
-      messages: [{ role: 'user', content }],
+      messages: [{ role: 'system', content: systemPrompt(language) }, { role: 'user', content }],
     }),
     signal: AbortSignal.timeout(90_000),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    throw new Error(`Advisor failed (${res.status}): ${JSON.stringify(data.error || data).slice(0, 300)}`)
+    throw new Error(`NVIDIA advisor failed (${res.status}): ${JSON.stringify(data.error || data).slice(0, 300)}`)
   }
-  const answer = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim()
+  const answer = String(data.choices?.[0]?.message?.content || '').trim()
   if (!answer) throw new Error('The advisor returned an empty answer.')
   return answer
 }
