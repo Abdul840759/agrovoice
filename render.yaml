@@ -7,7 +7,7 @@ services:
     startCommand: npm start
     healthCheckPath: /api/health
     disk:
-      name: agrovoice-data
+      name: agrovoice-uploads
       mountPath: /var/data
       sizeGB: 1
     envVars:
@@ -17,8 +17,8 @@ services:
         generateValue: true
       - key: PORT
         value: 10000
-      - key: DATABASE_PATH
-        value: /var/data/agrovoice.db
+      - key: MONGODB_URI
+        sync: false
       - key: UPLOAD_DIR
         value: /var/data/uploads
       - key: AI_STT

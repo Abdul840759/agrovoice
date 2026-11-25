@@ -1,46 +1,40 @@
-import Database from 'better-sqlite3'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import mongoose from 'mongoose'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const { Schema } = mongoose
 
-// The whole database is one file: server/agrovoice.db (created automatically).
-const db = new Database(process.env.DATABASE_PATH || path.join(__dirname, 'agrovoice.db'))
-db.pragma('journal_mode = WAL')
-db.pragma('foreign_keys = ON')
+const userSchema = new Schema({
+  name: { type: String, required: true, trim: true },
+  phone: { type: String, required: true, unique: true, index: true },
+  pin_hash: { type: String, required: true },
+}, { timestamps: { createdAt: 'created_at', updatedAt: false } })
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    phone TEXT NOT NULL UNIQUE,
-    pin_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-  );
+const questionSchema = new Schema({
+  user_id: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  language: { type: String, enum: ['ha', 'en'], default: 'ha' },
+  question_text: { type: String, default: null },
+  audio_file: { type: String, default: null },
+  photo_file: { type: String, default: null },
+  transcript: { type: String, default: null },
+  answer_text: { type: String, default: null },
+  answer_audio_file: { type: String, default: null },
+  status: { type: String, enum: ['pending', 'answered', 'failed'], default: 'pending', index: true },
+  stage: { type: String, default: null },
+  error: { type: String, default: null },
+}, { timestamps: { createdAt: 'created_at', updatedAt: false } })
 
-  CREATE TABLE IF NOT EXISTS questions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    language TEXT NOT NULL DEFAULT 'ha',          -- ha = Hausa, en = English
-    question_text TEXT,                            -- typed question (or speech-to-text later)
-    audio_file TEXT,                               -- recorded voice question (file name in uploads/)
-    photo_file TEXT,                               -- crop photo (file name in uploads/)
-    answer_text TEXT,                              -- filled in by the AI step
-    answer_audio_file TEXT,                        -- Hausa voice answer, filled in by the AI step
-    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'answered', 'failed')),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-  );
+questionSchema.index({ user_id: 1, _id: -1 })
 
-  CREATE INDEX IF NOT EXISTS idx_questions_user ON questions(user_id);
-`)
+export const User = mongoose.models.User || mongoose.model('User', userSchema)
+export const Question = mongoose.models.Question || mongoose.model('Question', questionSchema)
 
-// Add columns that older databases do not have yet.
-function addColumn(table, name, definition) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name)
-  if (!cols.includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`)
+export async function connectDatabase() {
+  const uri = process.env.MONGODB_URI
+  if (!uri) throw new Error('MONGODB_URI is required.')
+  await mongoose.connect(uri)
+  console.log('Connected to MongoDB.')
 }
-addColumn('questions', 'transcript', 'TEXT') // what speech-to-text heard
-addColumn('questions', 'stage', 'TEXT') // which AI step is running now
-addColumn('questions', 'error', 'TEXT') // why a question failed
 
-export default db
+export function toQuestionJSON(doc) {
+  const q = doc.toObject ? doc.toObject() : doc
+  return { ...q, id: String(q._id), user_id: String(q.user_id), _id: undefined, __v: undefined }
+}

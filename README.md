@@ -6,8 +6,8 @@ record a voice question (or type one), add a crop photo, and see the answer on a
 **How it is built (the classic way):**
 
 ```
-React app (client/)  --->  Express server (server/)  --->  SQLite database file + uploads folder
-   what farmers see         login, API, file storage        agrovoice.db   and   uploads/
+React app (client/)  --->  Express server (server/)  --->  MongoDB Atlas + uploads storage
+   what farmers see         login, API, file storage        accounts/questions   and   uploads/
 ```
 
 The app uses external AI providers for speech recognition, farm advice, and Hausa voice answers.
@@ -40,7 +40,7 @@ cd server
 npm install
 ```
 
-Wait until it finishes. (If it shows a `better-sqlite3` error, see Troubleshooting.)
+Wait until it finishes.
 
 ## Step 3: Create the server settings file
 
@@ -74,7 +74,7 @@ npm run dev
 ```
 
 You should see: `AgroVoice server running on http://localhost:4000`. Leave this terminal open.
-The first run creates the database file `server/agrovoice.db` and the `server/uploads` folder by itself.
+The first run creates the `server/uploads` folder. Configure `MONGODB_URI` to connect to MongoDB.
 
 ## Step 5: Install and start the app
 
@@ -95,12 +95,12 @@ Open the link it prints (usually http://localhost:5173) in Chrome.
 3. Tap the green microphone. Allow microphone access when Chrome asks. Speak, then tap again to stop. A player appears so you can listen.
 4. Optionally add a photo (on a laptop it opens a file picker). A thumbnail appears with a remove button.
 5. Tap **Aika (Send)**. The result screen opens with your photo, your recording, and "Working on your answer...".
-6. To test the answer display, open a **third terminal** and run:
+6. To manually set an answer for a MongoDB question, copy its 24-character ID from the result URL/log and run in a **third terminal**:
    ```bash
    cd server
-   npm run set-answer -- 1 "Remove the affected leaves and water at the base of the plant."
+   npm run set-answer -- 64f000000000000000000001 "Remove the affected leaves and water at the base of the plant."
    ```
-   (The `1` is the question number.) Within 3 seconds the result screen shows the answer.
+   (Replace the example ID with the question ID.) Within 3 seconds the result screen shows the answer.
 7. Tap **Tarihi (History)** to see past questions. Tap one to reopen it.
 8. Refresh the browser. You should still be logged in.
 
@@ -109,8 +109,7 @@ Open the link it prints (usually http://localhost:5173) in Chrome.
 ## Deploy the app
 
 The frontend can be hosted on Vercel. The API should run on a persistent Node host such as Render:
-this server uses SQLite and stores uploaded recordings and photos on disk. Vercel's function filesystem
-is temporary, so deploying the server there would lose data and files across runs.
+the API stores account and question data in MongoDB Atlas and uploaded recordings/photos on a Render persistent disk. Vercel's function filesystem is temporary, so the API runs on Render.
 
 ### Vercel frontend
 
@@ -125,16 +124,16 @@ which work with the local Vite proxy but are not connected to a production API.
 
 ### Render API (next)
 
-Create a Render **Web Service** from this repository with **Root Directory** `server`, **Build Command**
-`npm install`, and **Start Command** `npm start`. Set `JWT_SECRET` to a long random value and
-`CORS_ORIGIN` to the Vercel app origin. Add `AI_STT=elevenlabs`, `AI_ADVISOR=claude`, `AI_TTS=9jalingo`,
-`ELEVENLABS_API_KEY`, `ANTHROPIC_API_KEY`, and `NAIJALINGO_API_KEY`.
+Create a MongoDB Atlas cluster and database user, then copy its connection URI. Create a Render **Web Service**
+from this repository with **Root Directory** `server`, **Build Command** `npm install`, and **Start Command**
+`npm start`. Set `MONGODB_URI` to the Atlas URI, `JWT_SECRET` to a long random value, and `CORS_ORIGIN`
+to the Vercel app origin. Add `AI_STT=elevenlabs`, `AI_ADVISOR=claude`, `AI_TTS=9jalingo`,
+`ELEVENLABS_API_KEY`, `ANTHROPIC_API_KEY`, and `NAIJALINGO_API_KEY`. The included `render.yaml` provisions a
+persistent disk for uploads; no database disk is needed.
 
-Before using real farmer data, replace SQLite/local uploads with a persistent database and object storage,
-or attach durable storage on Render. The current local files are suitable for development, not a reliable
-multi-instance production setup. Do not commit `server/.env`, database files, or uploads.
+The app uses MongoDB for persistent records and Render persistent disk for uploaded files. For horizontal scaling, move uploads to object storage such as S3 or Cloudinary. Do not commit `server/.env`, database files, or uploads.
 
-To look inside the database, install the free **DB Browser for SQLite** (https://sqlitebrowser.org) and open `server/agrovoice.db`.
+To inspect records, use MongoDB Atlas Data Explorer or MongoDB Compass with your Atlas connection.
 
 ---
 
@@ -147,7 +146,7 @@ The easy way is a tunnel that gives your laptop a temporary HTTPS link:
 2. With both servers running, run: `ngrok http 5173`
 3. Open the `https://...` link it prints on your phone.
 
-Putting the app online for real (a hosted server with a permanent disk for `agrovoice.db` and `uploads/`) comes later.
+Production uses MongoDB Atlas for records and a persistent Render disk for uploaded files.
 
 ---
 
@@ -157,12 +156,12 @@ Putting the app online for real (a hosted server with a permanent disk for `agro
 |---|---|
 | `Missing JWT_SECRET` when starting the server | `server/.env` is missing or still has the placeholder. Redo Step 3, then restart. |
 | App shows "Cannot reach the server" or the terminal shows `ECONNREFUSED` | The server is not running. Start it (Step 4) and keep that terminal open. |
-| `npm install` fails on `better-sqlite3` | Check `node -v` is 20 or higher. Delete the `node_modules` folder and `package-lock.json` inside `server`, then run `npm install` again. |
+| `npm install` fails | Check `node -v` is 20 or higher, then delete `server/node_modules` and rerun `npm install`. |
 | `EADDRINUSE: port 4000 already in use` | Another copy of the server is running. Close it, or change `PORT` in `server/.env` and the port in `client/vite.config.js`. |
 | "Wrong phone number or PIN" | PIN must be exactly 6 numbers. Use the phone number you signed up with. After 5 wrong tries the number is locked for 15 minutes (restart the server to clear it). |
 | Microphone does not work | Use Chrome. Click the lock icon in the address bar and allow the microphone. On a phone, use the HTTPS tunnel link. |
 | Blank white page | Press F12, open the **Console** tab, and read the red error. |
-| Want to start fresh | Stop the server, delete `server/agrovoice.db` (and the `-wal` and `-shm` files next to it) and everything inside `server/uploads`, then start again. |
+| Want to start fresh | Stop the server, clear the MongoDB `users` and `questions` collections and everything inside `server/uploads`, then start again. |
 
 ---
 
@@ -170,7 +169,7 @@ Putting the app online for real (a hosted server with a permanent disk for `agro
 
 ```
 server/index.js            the whole API: sign-up, login, questions, private files
-server/db.js               creates the SQLite database and tables
+server/db.js               MongoDB connection and Mongoose models
 server/scripts/set-answer.js   fakes an AI answer for testing
 server/.env.example        copy to .env and set JWT_SECRET
 client/src/App.jsx         navigation between screens
@@ -192,7 +191,7 @@ client/src/styles.css      styles
 
 ## Known limits
 
-- The AI step uses mock answers until you add API keys. The Hausa quality of each service must be tested and measured.
+- The real AI providers require API keys. Hausa quality should be tested and measured with local farmers and extension workers.
 - No offline mode yet.
 - There is no "forgot PIN" option. Create a new account with a different number if a PIN is forgotten.
 - The Hausa labels are first drafts. Have a native speaker check them.

@@ -7,7 +7,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import db from './db.js'
+import { connectDatabase, Question, User, toQuestionJSON } from './db.js'
 import { processQuestion, resumePending } from './ai/pipeline.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -83,7 +83,8 @@ function recordFailure(phone) {
 
 // ---------- auth routes ----------
 
-app.post('/api/auth/signup', (req, res) => {
+app.post('/api/auth/signup', async (req, res, next) => {
+  try {
   const name = String(req.body.name || '').trim()
   const phone = normalizePhone(req.body.phone)
   const pin = String(req.body.pin || '')
@@ -94,38 +95,44 @@ app.post('/api/auth/signup', (req, res) => {
   if (!/^\d{6}$/.test(pin)) {
     return res.status(400).json({ error: 'PIN must be exactly 6 numbers.' })
   }
-  if (db.prepare('SELECT id FROM users WHERE phone = ?').get(phone)) {
+  if (await User.exists({ phone })) {
     return res.status(409).json({ error: 'This phone number already has an account. Please sign in.' })
   }
 
-  const info = db
-    .prepare('INSERT INTO users (name, phone, pin_hash) VALUES (?, ?, ?)')
-    .run(name, phone, bcrypt.hashSync(pin, 10))
-  const user = { id: Number(info.lastInsertRowid), name, phone }
+  const row = await User.create({ name, phone, pin_hash: bcrypt.hashSync(pin, 10) })
+  const user = { id: String(row._id), name, phone }
   res.status(201).json({ token: signToken(user), user })
+  } catch (e) {
+    if (e.code === 11000) return res.status(409).json({ error: 'This phone number already has an account. Please sign in.' })
+    next(e)
+  }
 })
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res, next) => {
+ try {
   const phone = normalizePhone(req.body.phone)
   const pin = String(req.body.pin || '')
 
   if (tooManyAttempts(phone)) {
     return res.status(429).json({ error: 'Too many wrong attempts. Try again in 15 minutes.' })
   }
-  const row = db.prepare('SELECT id, name, phone, pin_hash FROM users WHERE phone = ?').get(phone)
+  const row = await User.findOne({ phone })
   if (!row || !bcrypt.compareSync(pin, row.pin_hash)) {
     recordFailure(phone)
     return res.status(401).json({ error: 'Wrong phone number or PIN.' })
   }
   attempts.delete(phone)
-  const user = { id: row.id, name: row.name, phone: row.phone }
+  const user = { id: String(row._id), name: row.name, phone: row.phone }
   res.json({ token: signToken(user), user })
+ } catch (e) { next(e) }
 })
 
-app.get('/api/me', auth, (req, res) => {
-  const user = db.prepare('SELECT id, name, phone FROM users WHERE id = ?').get(req.userId)
+app.get('/api/me', auth, async (req, res, next) => {
+ try {
+  const user = await User.findById(req.userId).select('name phone')
   if (!user) return res.status(401).json({ error: 'Account not found. Please log in again.' })
-  res.json(user)
+  res.json({ id: String(user._id), name: user.name, phone: user.phone })
+ } catch (e) { next(e) }
 })
 
 // ---------- questions ----------
@@ -147,14 +154,12 @@ const upload = multer({
   },
 })
 
-const COLUMNS = `id, language, question_text, audio_file, photo_file, transcript,
-                 answer_text, answer_audio_file, status, stage, error, created_at`
-
 app.post(
   '/api/questions',
   auth,
   upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'photo', maxCount: 1 }]),
-  (req, res) => {
+  async (req, res, next) => {
+   try {
     const language = req.body.language === 'en' ? 'en' : 'ha'
     const text = String(req.body.question_text || '').trim() || null
     const audio = req.files?.audio?.[0]?.filename || null
@@ -163,52 +168,50 @@ app.post(
     if (!text && !audio && !photo) {
       return res.status(400).json({ error: 'Send a recording, a photo, or a typed question.' })
     }
-    const info = db
-      .prepare(
-        `INSERT INTO questions (user_id, language, question_text, audio_file, photo_file)
-         VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(req.userId, language, text, audio, photo)
-    const id = Number(info.lastInsertRowid)
+    const question = await Question.create({ user_id: req.userId, language, question_text: text, audio_file: audio, photo_file: photo })
+    const id = String(question._id)
     processQuestion(id) // runs in the background: speech to text, advice, voice answer
     res.status(201).json({ id })
+   } catch (e) { next(e) }
   }
 )
 
-app.get('/api/questions', auth, (req, res) => {
-  res.json(
-    db.prepare(`SELECT ${COLUMNS} FROM questions WHERE user_id = ? ORDER BY id DESC`).all(req.userId)
-  )
+app.get('/api/questions', auth, async (req, res, next) => {
+ try {
+  const rows = await Question.find({ user_id: req.userId }).sort({ _id: -1 }).lean()
+  res.json(rows.map(toQuestionJSON))
+ } catch (e) { next(e) }
 })
 
-app.get('/api/questions/:id', auth, (req, res) => {
-  const q = db
-    .prepare(`SELECT ${COLUMNS} FROM questions WHERE id = ? AND user_id = ?`)
-    .get(req.params.id, req.userId)
+app.get('/api/questions/:id', auth, async (req, res, next) => {
+ try {
+  if (!/^[a-f\d]{24}$/i.test(req.params.id)) return res.status(404).json({ error: 'Question not found.' })
+  const q = await Question.findOne({ _id: req.params.id, user_id: req.userId })
   if (!q) return res.status(404).json({ error: 'Question not found.' })
-  res.json(q)
+  res.json(toQuestionJSON(q))
+ } catch (e) { next(e) }
 })
 
 // Try a failed question again (for example after fixing an API key).
-app.post('/api/questions/:id/retry', auth, (req, res) => {
-  const q = db.prepare('SELECT id, status FROM questions WHERE id = ? AND user_id = ?').get(req.params.id, req.userId)
+app.post('/api/questions/:id/retry', auth, async (req, res, next) => {
+ try {
+  if (!/^[a-f\d]{24}$/i.test(req.params.id)) return res.status(404).json({ error: 'Question not found.' })
+  const q = await Question.findOne({ _id: req.params.id, user_id: req.userId }).select('status')
   if (!q) return res.status(404).json({ error: 'Question not found.' })
   if (q.status !== 'failed') return res.status(400).json({ error: 'Only failed questions can be retried.' })
-  processQuestion(q.id)
+  processQuestion(String(q._id))
   res.status(202).json({ ok: true })
+ } catch (e) { next(e) }
 })
 
 // Files are private: only the person who owns the question can download its files.
-app.get('/api/files/:name', auth, (req, res) => {
+app.get('/api/files/:name', auth, async (req, res, next) => {
+ try {
   const name = path.basename(req.params.name)
-  const owns = db
-    .prepare(
-      `SELECT 1 FROM questions
-       WHERE user_id = ? AND (audio_file = ? OR photo_file = ? OR answer_audio_file = ?)`
-    )
-    .get(req.userId, name, name, name)
+  const owns = await Question.exists({ user_id: req.userId, $or: [{ audio_file: name }, { photo_file: name }, { answer_audio_file: name }] })
   if (!owns) return res.status(404).json({ error: 'File not found.' })
   res.sendFile(path.join(UPLOAD_DIR, name))
+ } catch (e) { next(e) }
 })
 
 // ---------- errors ----------
@@ -219,6 +222,7 @@ app.use((err, req, res, next) => {
   res.status(400).json({ error: message || 'Something went wrong.' })
 })
 
+await connectDatabase()
 app.listen(PORT, () => {
   console.log(`AgroVoice server running on http://localhost:${PORT}`)
   console.log(`AI: speech-to-text=${process.env.AI_STT || 'elevenlabs'}, advisor=${process.env.AI_ADVISOR || 'claude'}, voice=${process.env.AI_TTS || '9jalingo'}`)
