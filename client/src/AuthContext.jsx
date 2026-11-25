@@ -32,8 +32,25 @@ export function AuthProvider({ children }) {
     }
   }
 
-  const signUp = (form) => finish(api.signup(form))
+  async function signUp(form) {
+    try { return await api.signup(form) }
+    catch (e) { return { error: { message: e.message } } }
+  }
   const signIn = (form) => finish(api.login(form))
+  const verifyEmail = (form) => finish(api.verifyEmail(form))
+  const resendCode = (email) => api.resendCode(email)
+
+  async function signInGoogle(credential) {
+    try {
+      const result = await api.googleAuth(credential)
+      if (result.needsProfile) return result
+      setToken(result.token)
+      setUser(result.user)
+      return result
+    } catch (e) { return { error: { message: e.message } } }
+  }
+
+  const completeGoogle = (form) => finish(api.completeGoogle(form))
 
   function signOut() {
     setToken(null)
@@ -41,7 +58,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, signUp, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, loading, signUp, signIn, verifyEmail, resendCode, signInGoogle, completeGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   )

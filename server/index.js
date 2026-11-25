@@ -6,6 +6,7 @@ import multer from 'multer'
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
+import { OAuth2Client } from 'google-auth-library'
 import { fileURLToPath } from 'node:url'
 import { connectDatabase, Question, User, toQuestionJSON } from './db.js'
 import { processQuestion, resumePending } from './ai/pipeline.js'
@@ -13,6 +14,7 @@ import { processQuestion, resumePending } from './ai/pipeline.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT || 4000
 const JWT_SECRET = process.env.JWT_SECRET
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
 
 if (!JWT_SECRET || JWT_SECRET.startsWith('paste-') || JWT_SECRET.length < 32) {
   console.error('Missing JWT_SECRET. Create server/.env and set a long random JWT_SECRET (see README step 3).')
@@ -81,29 +83,142 @@ function recordFailure(phone) {
   else a.count += 1
 }
 
+function hashCode(code) {
+  return crypto.createHash('sha256').update(code).digest('hex')
+}
+
+async function sendVerificationEmail(email, code) {
+  const apiKey = process.env.BREVO_API_KEY
+  const sender = process.env.BREVO_SENDER_EMAIL
+  if (!apiKey || !sender) throw new Error('Email verification is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL.')
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: { 'api-key': apiKey, 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      sender: { email: sender, name: process.env.BREVO_SENDER_NAME || 'AgroVoice' },
+      to: [{ email }],
+      subject: 'Your AgroVoice verification code',
+      textContent: `Your AgroVoice verification code is ${code}. It expires in 10 minutes. If you did not request this, ignore this email.`,
+    }),
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(`Brevo could not send the verification email (${response.status}): ${body.slice(0, 250)}`)
+  }
+}
+
+async function getGoogleProfile(credential) {
+  if (!process.env.GOOGLE_CLIENT_ID) throw new Error('Google sign-in is not configured yet.')
+  const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: process.env.GOOGLE_CLIENT_ID })
+  const payload = ticket.getPayload()
+  if (!payload?.email || !payload.email_verified || !payload.sub) throw new Error('Google did not return a verified email address.')
+  return { email: payload.email.toLowerCase(), name: payload.name || payload.email.split('@')[0], google_sub: payload.sub }
+}
+
 // ---------- auth routes ----------
 
 app.post('/api/auth/signup', async (req, res, next) => {
   try {
   const name = String(req.body.name || '').trim()
   const phone = normalizePhone(req.body.phone)
+  const email = String(req.body.email || '').trim().toLowerCase()
   const pin = String(req.body.pin || '')
 
-  if (!name || phone.length < 10) {
-    return res.status(400).json({ error: 'Enter your name and a valid phone number.' })
+  if (!name || phone.length < 10 || !/^\S+@\S+\.\S+$/.test(email)) {
+    return res.status(400).json({ error: 'Enter your name, a valid phone number, and a valid email address.' })
   }
   if (!/^\d{6}$/.test(pin)) {
     return res.status(400).json({ error: 'PIN must be exactly 6 numbers.' })
   }
-  if (await User.exists({ phone })) {
-    return res.status(409).json({ error: 'This phone number already has an account. Please sign in.' })
+  const existing = await User.findOne({ $or: [{ phone }, { email }] })
+  if (existing && !existing.email_verified && existing.phone === phone && existing.email === email) {
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0')
+    existing.verification_code_hash = hashCode(code)
+    existing.verification_expires_at = new Date(Date.now() + 10 * 60 * 1000)
+    await existing.save()
+    await sendVerificationEmail(email, code)
+    return res.status(201).json({ verificationRequired: true, email })
+  }
+  if (existing) {
+    return res.status(409).json({ error: 'This phone number or email already has an account. Please sign in.' })
   }
 
-  const row = await User.create({ name, phone, pin_hash: bcrypt.hashSync(pin, 10) })
-  const user = { id: String(row._id), name, phone }
-  res.status(201).json({ token: signToken(user), user })
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0')
+  const row = await User.create({ name, phone, email, email_verified: false, verification_code_hash: hashCode(code), verification_expires_at: new Date(Date.now() + 10 * 60 * 1000), pin_hash: bcrypt.hashSync(pin, 10) })
+  await sendVerificationEmail(email, code)
+  res.status(201).json({ verificationRequired: true, email: row.email })
   } catch (e) {
-    if (e.code === 11000) return res.status(409).json({ error: 'This phone number already has an account. Please sign in.' })
+    if (e.code === 11000) return res.status(409).json({ error: 'This phone number or email already has an account. Please sign in.' })
+    next(e)
+  }
+})
+
+app.post('/api/auth/verify-email', async (req, res, next) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase()
+    const code = String(req.body.code || '').trim()
+    if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Enter the 6-digit code from your email.' })
+    const row = await User.findOne({ email })
+    if (!row) return res.status(404).json({ error: 'Account not found. Create your account again.' })
+    if (row.email_verified) return res.status(409).json({ error: 'This email is already verified. Please sign in.' })
+    if (!row.verification_code_hash || !row.verification_expires_at || row.verification_expires_at < new Date()) {
+      return res.status(400).json({ error: 'That code has expired. Request a new code.' })
+    }
+    if (hashCode(code) !== row.verification_code_hash) return res.status(400).json({ error: 'That verification code is not correct.' })
+    row.email_verified = true
+    row.verification_code_hash = null
+    row.verification_expires_at = null
+    await row.save()
+    const user = { id: String(row._id), name: row.name, phone: row.phone }
+    res.json({ token: signToken(user), user })
+  } catch (e) { next(e) }
+})
+
+app.post('/api/auth/resend-code', async (req, res, next) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase()
+    const row = await User.findOne({ email })
+    if (!row) return res.status(404).json({ error: 'Account not found. Create your account again.' })
+    if (row.email_verified) return res.status(409).json({ error: 'This email is already verified. Please sign in.' })
+    const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0')
+    row.verification_code_hash = hashCode(code)
+    row.verification_expires_at = new Date(Date.now() + 10 * 60 * 1000)
+    await row.save()
+    await sendVerificationEmail(email, code)
+    res.json({ ok: true })
+  } catch (e) { next(e) }
+})
+
+app.post('/api/auth/google', async (req, res, next) => {
+  try {
+    const profile = await getGoogleProfile(req.body.credential)
+    const row = await User.findOne({ $or: [{ email: profile.email }, { google_sub: profile.google_sub }] })
+    if (row) {
+      if (row.email !== profile.email) return res.status(409).json({ error: 'This Google account is already linked to a different email.' })
+      row.email_verified = true
+      row.google_sub = profile.google_sub
+      await row.save()
+      const user = { id: String(row._id), name: row.name, phone: row.phone }
+      return res.json({ token: signToken(user), user })
+    }
+    res.json({ needsProfile: true, email: profile.email, name: profile.name })
+  } catch (e) { res.status(400).json({ error: e.message || 'Google sign-in failed.' }) }
+})
+
+app.post('/api/auth/google/complete', async (req, res, next) => {
+  try {
+    const profile = await getGoogleProfile(req.body.credential)
+    const phone = normalizePhone(req.body.phone)
+    const pin = String(req.body.pin || '')
+    if (phone.length < 10) return res.status(400).json({ error: 'Enter a valid phone number.' })
+    if (!/^\d{6}$/.test(pin)) return res.status(400).json({ error: 'PIN must be exactly 6 numbers.' })
+    if (await User.exists({ $or: [{ phone }, { email: profile.email }] })) return res.status(409).json({ error: 'This phone number or email already has an account. Sign in with that account instead.' })
+    const row = await User.create({ ...profile, phone, email_verified: true, pin_hash: bcrypt.hashSync(pin, 10) })
+    const user = { id: String(row._id), name: row.name, phone: row.phone }
+    res.status(201).json({ token: signToken(user), user })
+  } catch (e) {
+    if (e.code === 11000) return res.status(409).json({ error: 'This phone number or email already has an account. Sign in instead.' })
     next(e)
   }
 })
@@ -121,6 +236,7 @@ app.post('/api/auth/login', async (req, res, next) => {
     recordFailure(phone)
     return res.status(401).json({ error: 'Wrong phone number or PIN.' })
   }
+  if (!row.email_verified) return res.status(403).json({ error: 'Verify your email before signing in.' })
   attempts.delete(phone)
   const user = { id: String(row._id), name: row.name, phone: row.phone }
   res.json({ token: signToken(user), user })

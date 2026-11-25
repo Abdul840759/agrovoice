@@ -5,6 +5,11 @@ const { Schema } = mongoose
 const userSchema = new Schema({
   name: { type: String, required: true, trim: true },
   phone: { type: String, required: true, unique: true, index: true },
+  email: { type: String, trim: true, lowercase: true, unique: true, sparse: true, index: true },
+  email_verified: { type: Boolean, default: false },
+  verification_code_hash: { type: String, default: null },
+  verification_expires_at: { type: Date, default: null },
+  google_sub: { type: String, default: undefined },
   pin_hash: { type: String, required: true },
 }, { timestamps: { createdAt: 'created_at', updatedAt: false } })
 
@@ -23,6 +28,7 @@ const questionSchema = new Schema({
 }, { timestamps: { createdAt: 'created_at', updatedAt: false } })
 
 questionSchema.index({ user_id: 1, _id: -1 })
+userSchema.index({ google_sub: 1 }, { unique: true, partialFilterExpression: { google_sub: { $type: 'string' } } })
 
 export const User = mongoose.models.User || mongoose.model('User', userSchema)
 export const Question = mongoose.models.Question || mongoose.model('Question', questionSchema)

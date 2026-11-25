@@ -154,6 +154,15 @@ input:focus, select:focus, textarea:focus {
   width: calc(100% - 36px); max-width: 400px; margin: -56px auto 0; padding: 22px 20px 24px;
   border: 1px solid var(--line); border-radius: 26px; background: var(--surface); box-shadow: var(--shadow);
 }
+.auth-step-title { margin: 16px 0 0; font-size: 19px; letter-spacing: -.02em; }
+.auth-help { margin-top: 8px; color: var(--muted); font-size: 13px; }
+.auth-notice { margin-top: 10px; color: var(--accent-text); font-size: 13px; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; color: var(--muted); font-size: 12px; }
+.auth-divider::before, .auth-divider::after { content: ''; height: 1px; flex: 1; background: var(--line); }
+.google-login { display: flex; justify-content: center; min-height: 40px; }
+.auth-secondary { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.auth-secondary button { border: 0; padding: 6px 0; background: transparent; color: var(--accent-text); font-size: 13px; font-weight: 650; }
+.auth-secondary button:disabled { opacity: .6; }
 .field { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
 .field label { font-size: 13px; font-weight: 600; color: var(--muted); }
 .auth-features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: calc(100% - 36px); max-width: 400px; margin: 18px auto 0; }

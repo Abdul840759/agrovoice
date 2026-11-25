@@ -116,7 +116,7 @@ the API stores account and question data in MongoDB Atlas and uploaded recording
 1. Push this project to a private GitHub repository. The root `vercel.json` rewrites app routes to `index.html`.
 2. In Vercel, import the repository and set **Root Directory** to `client`.
 3. Set **Build Command** to `npm run build` and **Output Directory** to `dist`.
-4. Add `VITE_API_URL` with the public Render API origin, for example `https://agrovoice-api.onrender.com` (no trailing slash).
+4. Add `VITE_API_URL` with the public Render API origin, for example `https://agrovoice-api.onrender.com` (no trailing slash), and `VITE_GOOGLE_CLIENT_ID` with the Google OAuth Web client ID.
 5. Deploy. The API service must allow requests from the Vercel domain; configure its CORS origin before using sign-in.
 
 For a preview before the API is deployed, leave `VITE_API_URL` empty. The app will use relative `/api` paths,
@@ -127,7 +127,7 @@ which work with the local Vite proxy but are not connected to a production API.
 Create a MongoDB Atlas cluster and database user, then copy its connection URI. Create a Render **Web Service**
 from this repository with **Root Directory** `server`, **Build Command** `npm install`, and **Start Command**
 `npm start`. Set `MONGODB_URI` to the Atlas URI, `JWT_SECRET` to a long random value, and `CORS_ORIGIN`
-to the Vercel app origin. Add `AI_STT=elevenlabs`, `AI_ADVISOR=nvidia`, `AI_TTS=9jalingo`,
+to the Vercel app origin. Add `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, and `GOOGLE_CLIENT_ID` for email verification and Google sign-in. The sender email must be verified in Brevo. Add `AI_STT=elevenlabs`, `AI_ADVISOR=nvidia`, `AI_TTS=9jalingo`,
 `ELEVENLABS_API_KEY`, `NVIDIA_API_KEY`, and `NAIJALINGO_API_KEY`. The included `render.yaml` provisions a
 persistent disk for uploads; no database disk is needed.
 

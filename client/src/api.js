@@ -35,6 +35,10 @@ const json = (body) => ({
 export const api = {
   signup: (form) => request('/auth/signup', json(form)),
   login: (form) => request('/auth/login', json(form)),
+  verifyEmail: (form) => request('/auth/verify-email', json(form)),
+  resendCode: (email) => request('/auth/resend-code', json({ email })),
+  googleAuth: (credential) => request('/auth/google', json({ credential })),
+  completeGoogle: (form) => request('/auth/google/complete', json(form)),
   me: () => request('/me'),
   sendQuestion: (formData) => request('/questions', { method: 'POST', body: formData }),
   listQuestions: () => request('/questions'),
