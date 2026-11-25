@@ -1,0 +1,7 @@
+.DS_Store
+node_modules/
+**/node_modules/
+client/dist/
+server/.env
+server/agrovoice.db*
+server/uploads/

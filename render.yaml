@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: agrovoice-api
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: agrovoice-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PORT
+        value: 10000
+      - key: DATABASE_PATH
+        value: /var/data/agrovoice.db
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: AI_STT
+        value: elevenlabs
+      - key: AI_ADVISOR
+        value: claude
+      - key: AI_TTS
+        value: 9jalingo
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: NAIJALINGO_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
